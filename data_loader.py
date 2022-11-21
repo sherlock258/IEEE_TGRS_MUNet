@@ -26,6 +26,7 @@ def set_loader(args):
     label = label.astype(np.float32).transpose(2,1,0)
     lidar = input_data['MPN']
     lidar = lidar.astype(np.float32)
+    # 130 x 90 x 5
     M_init = input_data['M1']
     M_init = torch.from_numpy(M_init).unsqueeze(2).unsqueeze(3).float() 
     M_true = input_data['M']
@@ -57,7 +58,7 @@ def set_loader(args):
     label_test_loader = Data.DataLoader(Label_train, batch_size=row*col, shuffle=False)
     return label_train_loader, label_test_loader, label, M_init, M_true, num_classes, band, col, row, lidar.shape[2]
 
-
+# mirror_image, mirror_lidar = mirror_hsi(row, col, band, lidar.shape[2], image, lidar, args.patch)
 def mirror_hsi(height, width, band, edm, input_normalize, label_normalize, patch):
     padding=patch//2
     mirror_hsi=np.zeros((height+2*padding,width+2*padding,band), dtype=float)
