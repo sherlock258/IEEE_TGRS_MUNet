@@ -55,9 +55,9 @@ class MUNet(nn.Module):
         encode = self.fc_hsi(x)
         ## spectral attention
         y_fe = self.spectral_fe(y)
-
         attention = self.spectral_se(y_fe)
         abu = self.softmax(torch.mul(encode, attention))
+        # 矩阵点积计算
 
         output = self.decoder(abu)
 

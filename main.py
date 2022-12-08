@@ -14,12 +14,34 @@ import random
 import time
 import os
 
+import logging
+ 
+def get_logger(filename, verbosity=1, name=None):
+    level_dict = {0: logging.DEBUG, 1: logging.INFO, 2: logging.WARNING}
+    formatter = logging.Formatter(
+        "[%(asctime)s][%(filename)s][line:%(lineno)d][%(levelname)s] %(message)s"
+    )
+    logger = logging.getLogger(name)
+    logger.setLevel(level_dict[verbosity])
+ 
+    fh = logging.FileHandler(filename, "w")
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+ 
+    sh = logging.StreamHandler()
+    sh.setFormatter(formatter)
+    logger.addHandler(sh)
+ 
+    return logger
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--fix_random', action='store_true', help='fix randomness')
 parser.add_argument('--seed', default=0, type=int)
-parser.add_argument('--gpu_id', default='0,1,2', help='gpu id')
+# parser.add_argument('--gpu_id', default='0,1,2', help='gpu id')
 parser.add_argument('--batch_size', default=128, type=int, help='batch size')
-parser.add_argument('--patch', default=1, type=int, help='input data size')
+parser.add_argument('--patch', default=5, type=int, help='input data size')
 parser.add_argument('--learning_rate_en', default=3e-4, type=float, help='learning rate of encoder')
 parser.add_argument('--learning_rate_de', default=1e-4, type=float, help='learning rate of decoder')
 parser.add_argument('--weight_decay', default=1e-5, type=float, help='network parameter regularization')
@@ -34,14 +56,14 @@ args = parser.parse_args()
 
 if __name__ == '__main__':
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu_id)
-    torch.cuda.set_device(2)
+    # os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu_id)
+    # torch.cuda.set_device(2)
 
-    if torch.cuda.is_available():
-        print ('GPU is true')
-        print('cuda version: {}'.format(torch.version.cuda))
-    else:
-        print('CPU is true')
+    # if torch.cuda.is_available():
+    #     print ('GPU is true')
+    #     print('cuda version: {}'.format(torch.version.cuda))
+    # else:
+    #     print('CPU is true')
 
     if args.fix_random:
         # init seed within each thread
@@ -61,11 +83,12 @@ if __name__ == '__main__':
                     'from checkpoints.')
     else:
         cudnn.benchmark = True
-    print("Using GPU: {}".format(args.gpu_id))
+    # print("Using GPU: {}".format(args.gpu_id))
 
     # create dataset and model
+
     train_loaders, test_loaders, label, M_init, M_true, num_classes, band, col, row, ldr_dim = set_loader(args)
-    net = MUNet(band, num_classes, ldr_dim, args.reduction).cuda()
+    net = MUNet(band, num_classes, ldr_dim, args.reduction).to(device)
     
     # initialize net parameters and endmembers
     if args.dataset == 'muffle':
@@ -93,16 +116,23 @@ if __name__ == '__main__':
                                     lr = args.learning_rate_en, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=args.gamma)
 
+    logger = get_logger('Log/train.log')
+
     time_start = time.time()
+    logger.info('start training!')
     for epoch in range(args.epoch):
         for i, traindata in enumerate(train_loaders):        
             net.train()
 
             x, y = traindata       
-            x = x.cuda()
-            y = y.cuda()
+            # x = x.cuda()
+            # y = y.cuda()
+            x = x.to(device)
+            y = y.to(device)
+            # x,y都作为训练数据，x表示HSI，y表示Lidar
             
-            abu, output = net(x,y)            
+            abu, output = net(x,y)
+            # abu表示丰度，output表示ReC            
             output = torch.reshape(output, (output.shape[0], band))
             x = torch.reshape(x, (output.shape[0], band))
 
@@ -118,31 +148,36 @@ if __name__ == '__main__':
             optimizer.step()
             net.decoder.apply(apply_nonegative)    
         
-        if epoch % 1 == 0:
-            print('Epoch: {:d} | Train Unmix Loss: {:.5f} | RE Loss: {:.5f} | Sparsity Loss: {:.5f} | Minvol: {:.5f}'
+        if epoch % 10 == 0:
+            # print('Epoch: {:d} | Train Unmix Loss: {:.5f} | RE Loss: {:.5f} | Sparsity Loss: {:.5f} | Minvol: {:.5f}'
+            #     .format(epoch, MSE_loss, loss_func(output, x), criterionSparse(abu), criterionVolumn(net.decoder[0].weight)))
+            logger.info('training stage')
+            logger.info('Epoch: {:d} | Train Unmix Loss: {:.5f} | RE Loss: {:.5f} | Sparsity Loss: {:.5f} | Minvol: {:.5f}'
                 .format(epoch, MSE_loss, loss_func(output, x), criterionSparse(abu), criterionVolumn(net.decoder[0].weight)))
             net.eval()
             for k, testdata in enumerate(test_loaders):
                 x, y = testdata
-                x = x.cuda()
-                y = y.cuda()
+                x = x.to(device)
+                y = y.to(device)
             
                 abu_est, output = net(x, y)
- 
             abu_est = torch.reshape(abu_est.squeeze(-1).permute(2,1,0), (num_classes,row,col)).permute(0,2,1).cpu().data.numpy()
             edm_result = torch.reshape(net.decoder[0].weight, (band,num_classes)).cpu().data.numpy()           
-            print('RMSE: {:.5f} | SAD: {:.5f}'.format(compute_rmse(abu_est[position,:,:],label), compute_sad(M_true, edm_result[:,position])))
+            logger.info('validation')
+            logger.info('RMSE: {:.5f} | SAD: {:.5f}'.format(compute_rmse(abu_est[position,:,:],label), compute_sad(M_true, edm_result[:,position])))
+            # print('RMSE: {:.5f} | SAD: {:.5f}'.format(compute_rmse(abu_est[position,:,:],label), compute_sad(M_true, edm_result[:,position])))
             print('**********************************')
 
         scheduler.step()
+    logger.info('finish training!')
     time_end = time.time()
     # model evaluation
     net.eval()
     print(net.spectral_se)
     for i, testdata in enumerate(test_loaders):
         x, y = testdata
-        x = x.cuda()
-        y = y.cuda()
+        x = x.to(device)
+        y = y.to(device)
 
         abu, output = net(x, y)
 
